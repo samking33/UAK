@@ -21,6 +21,7 @@ env/
 # Project outputs
 report.json
 *.log
+*.db
 
 # Secrets / keys (DON'T COMMIT THESE)
 .env
