@@ -26,5 +26,6 @@ report.json
 # Secrets / keys (DON'T COMMIT THESE)
 .env
 *.env
+!.env
 *key.json
 pagespeed_key.json
