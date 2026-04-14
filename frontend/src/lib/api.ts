@@ -5,62 +5,163 @@ import type {
   PagedResponse,
   ScanMode,
   ScanRecord,
+  ScanProgressMessage,
   ThreatMapPoint,
-  WebSocketMessage,
 } from '@/types';
-
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8765';
 
 export interface RunAuditOptions {
   url: string;
   scanMode: ScanMode;
-  onProgress?: (message: WebSocketMessage) => void;
+  onProgress?: (message: ScanProgressMessage) => void;
 }
 
-async function fetchJSON<T>(path: string): Promise<T> {
-  const response = await fetch(path, {
+type ProgressStage = {
+  percent: number;
+  label: string;
+};
+
+const PROGRESS_STAGES: Record<ScanMode, ProgressStage[]> = {
+  scan: [
+    { percent: 8, label: 'Preparing standard scan...' },
+    { percent: 20, label: 'Resolving target and collecting headers...' },
+    { percent: 36, label: 'Checking DNS, SSL, and response signals...' },
+    { percent: 54, label: 'Scanning reputation and blacklist indicators...' },
+    { percent: 72, label: 'Correlating threat telemetry...' },
+    { percent: 88, label: 'Finalizing risk score and report...' },
+  ],
+  deep: [
+    { percent: 8, label: 'Preparing deep analysis...' },
+    { percent: 18, label: 'Resolving target and collecting headers...' },
+    { percent: 32, label: 'Inspecting TLS posture and certificate chain...' },
+    { percent: 48, label: 'Evaluating DNS, redirects, and page behavior...' },
+    { percent: 66, label: 'Running extended reputation checks...' },
+    { percent: 86, label: 'Synthesizing findings and scoring risk...' },
+  ],
+  sandbox: [
+    { percent: 8, label: 'Preparing sandbox analysis...' },
+    { percent: 18, label: 'Capturing target metadata...' },
+    { percent: 34, label: 'Executing containment-safe checks...' },
+    { percent: 52, label: 'Reviewing behavioral and network indicators...' },
+    { percent: 70, label: 'Cross-checking IOC matches...' },
+    { percent: 88, label: 'Finalizing sandbox report...' },
+  ],
+};
+
+function fetchJSON<T>(path: string): Promise<T> {
+  return fetch(path, {
     method: 'GET',
     cache: 'no-store',
+  }).then((response) => {
+    if (!response.ok) {
+      throw new Error(`Request failed (${response.status})`);
+    }
+    return response.json() as Promise<T>;
   });
-  if (!response.ok) {
-    throw new Error(`Request failed (${response.status})`);
-  }
-  return response.json();
 }
 
-export async function runAudit(options: RunAuditOptions): Promise<AuditResponse> {
-  const jobId = crypto.randomUUID();
-  const ws = new WebSocket(`${WS_URL}/ws/progress/${jobId}`);
+function startProgressSimulation(options: RunAuditOptions) {
+  const stages = PROGRESS_STAGES[options.scanMode];
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  let finished = false;
+  let currentPercent = 0;
 
-  ws.onmessage = (event) => {
-    try {
-      const payload = JSON.parse(event.data) as WebSocketMessage;
-      options.onProgress?.(payload);
-      if (payload.type === 'complete' || payload.type === 'error') {
-        ws.close();
-      }
-    } catch {
-      // no-op
+  const emit = (message: ScanProgressMessage) => {
+    if (!finished) {
+      options.onProgress?.(message);
     }
   };
 
+  emit({
+    type: 'start',
+    percent: stages[0]?.percent ?? 5,
+    label: stages[0]?.label ?? 'Preparing scan...',
+  });
+  currentPercent = stages[0]?.percent ?? 5;
+
+  stages.slice(1).forEach((stage, index) => {
+    timers.push(
+      setTimeout(() => {
+        if (finished) return;
+        currentPercent = Math.max(currentPercent, stage.percent);
+        emit({
+          type: 'progress',
+          step: index + 2,
+          total: stages.length,
+          percent: currentPercent,
+          label: stage.label,
+        });
+      }, 400 + index * 550)
+    );
+  });
+
+  const holdTimer = setInterval(() => {
+    if (finished) return;
+    const lastStage = stages[stages.length - 1];
+    if (!lastStage) return;
+    const nextPercent = Math.min(currentPercent + 1, 92);
+    if (nextPercent !== currentPercent) {
+      currentPercent = nextPercent;
+      emit({
+        type: 'progress',
+        step: stages.length,
+        total: stages.length,
+        percent: currentPercent,
+        label: lastStage.label,
+      });
+    }
+  }, 700);
+
+  return {
+    complete(label = 'Scan complete') {
+      if (finished) return;
+      finished = true;
+      timers.forEach(clearTimeout);
+      clearInterval(holdTimer);
+      options.onProgress?.({
+        type: 'complete',
+        percent: 100,
+        label,
+      });
+    },
+    fail(message = 'Scan failed') {
+      if (finished) return;
+      finished = true;
+      timers.forEach(clearTimeout);
+      clearInterval(holdTimer);
+      options.onProgress?.({
+        type: 'error',
+        percent: currentPercent,
+        label: 'Scan failed',
+        message,
+      });
+    },
+  };
+}
+
+export async function runAudit(options: RunAuditOptions): Promise<AuditResponse> {
+  const progress = startProgressSimulation(options);
+
   const formData = new FormData();
   formData.append('url', options.url);
-  formData.append('job_id', jobId);
   formData.append('scan_mode', options.scanMode);
 
-  const response = await fetch('/api/audit', {
-    method: 'POST',
-    body: formData,
-  });
-  if (!response.ok) {
-    ws.close();
-    throw new Error(`Audit failed (${response.status})`);
-  }
+  try {
+    const response = await fetch('/api/audit', {
+      method: 'POST',
+      body: formData,
+    });
 
-  const payload = (await response.json()) as AuditResponse;
-  ws.close();
-  return payload;
+    if (!response.ok) {
+      throw new Error(`Audit failed (${response.status})`);
+    }
+
+    const payload = (await response.json()) as AuditResponse;
+    progress.complete();
+    return payload;
+  } catch (error) {
+    progress.fail(error instanceof Error ? error.message : 'Audit failed');
+    throw error;
+  }
 }
 
 export async function getDashboardOverview(range: string): Promise<DashboardOverview> {

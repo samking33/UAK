@@ -1,0 +1,15 @@
+{
+  "name": "uak-hostinger-app",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "postinstall": "node scripts/sync-env.mjs && npm --prefix frontend install",
+    "dev": "node scripts/run-frontend.mjs dev",
+    "build": "node scripts/run-frontend.mjs build",
+    "start": "node scripts/run-frontend.mjs start",
+    "lint": "node scripts/run-frontend.mjs lint"
+  }
+}

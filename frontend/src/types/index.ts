@@ -57,7 +57,7 @@ export interface GroupedResult {
   checks: CheckResult[];
 }
 
-export interface WebSocketMessage {
+export interface ScanProgressMessage {
   type: 'start' | 'progress' | 'complete' | 'error';
   step?: number;
   total?: number;
@@ -65,6 +65,8 @@ export interface WebSocketMessage {
   label?: string;
   message?: string;
 }
+
+export type WebSocketMessage = ScanProgressMessage;
 
 export type ScanMode = 'scan' | 'deep' | 'sandbox';
 

@@ -12,11 +12,21 @@ dist/
 .venv/
 venv/
 env/
+node_modules/
+.next/
+frontend/node_modules/
+frontend/.next/
+frontend/data/runtime/
+.uak-data/
+frontend/.uak-data/
+*.tsbuildinfo
 
 # OS / editor
 .DS_Store
 .vscode/
 .idea/
+.env.local
+*.env.local
 
 # Project outputs
 report.json
